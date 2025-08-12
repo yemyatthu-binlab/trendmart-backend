@@ -1,0 +1,182 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ENUMS (from your raw schema)
+enum UserRole {
+  ADMIN
+  CUSTOMER
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  STRIPE
+  MANUAL_UPLOAD
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  VERIFICATION_PENDING
+}
+
+// MODELS
+
+model User {
+  id           Int        @id @default(autoincrement())
+  fullName     String     @map("full_name")
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  phoneNumber  String?    @map("phone_number")
+  role         UserRole   @default(CUSTOMER)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  addresses    Address[]
+  cartItems    CartItem[]
+  orders       Order[]
+}
+
+model Address {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  fullName     String   @map("full_name")
+  phoneNumber  String   @map("phone_number")
+  addressLine1 String   @map("address_line1")
+  addressLine2 String?  @map("address_line2")
+  city         String
+  state        String
+  postalCode   String   @map("postal_code")
+  isDefault    Boolean? @default(false) @map("is_default")
+  user         User     @relation(fields: [userId], references: [id])
+  orders       Order[]
+}
+
+model Product {
+  id          Int              @id @default(autoincrement())
+  name        String
+  description String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  variants    ProductVariant[]
+  categories  Category[]       @relation("ProductCategories")
+}
+
+model Size {
+  id       Int              @id @default(autoincrement())
+  value    String           @unique
+  variants ProductVariant[]
+}
+
+model Color {
+  id       Int              @id @default(autoincrement())
+  name     String           @unique
+  hexCode  String?          @map("hex_code")
+  variants ProductVariant[]
+}
+
+model ProductVariant {
+  id                 Int            @id @default(autoincrement())
+  productId          Int            @map("product_id")
+  sizeId             Int            @map("size_id")
+  colorId            Int            @map("color_id")
+  sku                String?        @unique
+  price              Int // Storing price in cents to avoid floating point issues
+  stock              Int            @default(0) @map("quantity_in_stock")
+  discountPercentage Decimal?       @map("discount_percentage") @db.Decimal(4, 2)
+  discountReachPoint Int?           @map("discount_reach_point")
+  product            Product        @relation(fields: [productId], references: [id])
+  size               Size           @relation(fields: [sizeId], references: [id])
+  color              Color          @relation(fields: [colorId], references: [id])
+  images             ProductImage[]
+  cartItems          CartItem[]
+  orderItems         OrderItem[]
+
+  @@unique([productId, sizeId, colorId])
+  @@map("product_variants")
+}
+
+model ProductImage {
+  id               Int            @id @default(autoincrement())
+  productVariantId Int            @map("product_variant_id")
+  imageUrl         String         @map("image_url")
+  altText          String?        @map("alt_text")
+  isPrimary        Boolean        @default(false) @map("is_primary")
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@map("product_images")
+}
+
+model Category {
+  id       Int        @id @default(autoincrement())
+  name     String     @unique
+  parentId Int?       @map("parent_category_id")
+  parent   Category?  @relation("ParentChild", fields: [parentId], references: [id])
+  children Category[] @relation("ParentChild")
+  products Product[]  @relation("ProductCategories")
+}
+
+model CartItem {
+  id               Int            @id @default(autoincrement())
+  userId           Int            @map("user_id")
+  productVariantId Int            @map("product_variant_id")
+  quantity         Int            @default(1)
+  createdAt        DateTime       @default(now()) @map("created_at")
+  user             User           @relation(fields: [userId], references: [id])
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@unique([userId, productVariantId])
+  @@map("cart_items")
+}
+
+model Order {
+  id                Int         @id @default(autoincrement())
+  userId            Int         @map("user_id")
+  shippingAddressId Int         @map("shipping_address_id")
+  orderTotal        Decimal     @map("order_total") @db.Decimal(10, 2)
+  orderStatus       OrderStatus @default(PENDING_PAYMENT) @map("order_status")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+  user              User        @relation(fields: [userId], references: [id])
+  shippingAddress   Address     @relation(fields: [shippingAddressId], references: [id])
+  items             OrderItem[]
+  payment           Payment?
+}
+
+model OrderItem {
+  id               Int            @id @default(autoincrement())
+  orderId          Int            @map("order_id")
+  productVariantId Int            @map("product_variant_id")
+  quantity         Int
+  priceAtPurchase  Int            @map("price_at_purchase") // Storing price in cents
+  discountApplied  Decimal?       @map("discount_applied") @db.Decimal(5, 2)
+  order            Order          @relation(fields: [orderId], references: [id])
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@map("order_items")
+}
+
+model Payment {
+  id                         Int           @id @default(autoincrement())
+  orderId                    Int           @unique @map("order_id")
+  amount                     Int // Storing amount in cents
+  paymentMethod              PaymentMethod @map("payment_method")
+  paymentStatus              PaymentStatus @default(PENDING) @map("payment_status")
+  stripePaymentIntentId      String?       @map("stripe_payment_intent_id")
+  manualPaymentScreenshotUrl String?       @map("manual_payment_screenshot_url")
+  createdAt                  DateTime      @default(now()) @map("created_at")
+  updatedAt                  DateTime      @updatedAt @map("updated_at")
+  order                      Order         @relation(fields: [orderId], references: [id])
+}

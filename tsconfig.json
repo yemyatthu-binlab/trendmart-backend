@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    /* Base Options */
+    "esModuleInterop": true, // Enables compatibility between CommonJS and ES Modules. CRITICAL for this setup.
+    "skipLibCheck": true, // Speeds up compilation by not type-checking library files.
+    "target": "ES2022", // Compile to a modern ECMAScript version.
+    "allowJs": true, // Allow JavaScript files to be compiled.
+    "resolveJsonModule": true, // Allows importing JSON files.
+    "moduleDetection": "force", // Ensures files are treated as modules.
+
+    /* Module Resolution */
+    "module": "CommonJS", // The output module format for Node.js.
+    "moduleResolution": "node", // How TypeScript finds modules.
+
+    /* Strictness */
+    "strict": true, // Enables all strict type-checking options.
+    "noUncheckedIndexedAccess": true, // Adds 'undefined' to index signatures.
+
+    /* Output */
+    "outDir": "dist", // Where to output the compiled JavaScript.
+    "sourceMap": true, // Generate sourcemap files for debugging.
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src/**/*"], // Which files to include in compilation.
+  "exclude": ["node_modules"] // Which files to exclude.
+}
