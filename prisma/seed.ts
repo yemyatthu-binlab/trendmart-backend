@@ -97,7 +97,7 @@ async function main() {
     });
     if (!parentCategory) {
       parentCategory = await prisma.category.create({
-        data: { name: mainCatName },
+        data: { name: mainCatName, isDeletable: false },
       });
       console.log(`Created parent category: ${mainCatName}`);
     }
@@ -110,6 +110,7 @@ async function main() {
         create: {
           name: uniqueSubCatName,
           parentId: parentCategory.id,
+          isDeletable: false,
         },
       });
     }

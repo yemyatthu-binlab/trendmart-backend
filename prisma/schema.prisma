@@ -120,12 +120,13 @@ model ProductImage {
 }
 
 model Category {
-  id       Int        @id @default(autoincrement())
-  name     String     @unique
-  parentId Int?       @map("parent_category_id")
-  parent   Category?  @relation("ParentChild", fields: [parentId], references: [id])
-  children Category[] @relation("ParentChild")
-  products Product[]  @relation("ProductCategories")
+  id          Int        @id @default(autoincrement())
+  name        String     @unique
+  parentId    Int?       @map("parent_category_id")
+  parent      Category?  @relation("ParentChild", fields: [parentId], references: [id])
+  children    Category[] @relation("ParentChild")
+  products    Product[]  @relation("ProductCategories")
+  isDeletable Boolean    @default(true)
 }
 
 model CartItem {

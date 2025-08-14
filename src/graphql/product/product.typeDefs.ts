@@ -1,4 +1,3 @@
-
 export default `#graphql
   # ENUMS
   enum CacheControlScope {
@@ -53,6 +52,11 @@ export default `#graphql
     hexCode: String
   }
 
+  type PresignedPost {
+  url: String!
+  fields: String! # JSON string of fields
+}
+
   # INPUT TYPES for Mutations
   input CreateProductImageInput {
     imageUrl: String!
@@ -83,10 +87,13 @@ export default `#graphql
     getCategories: [Category!]
     getSizes: [Size!]
     getColors: [Color!]
+    getMainSubCategories: [Category!]!   
   }
 
   type Mutation {
     createProduct(input: CreateProductInput!): Product!
     createCategory(name: String!, parentId: Int): Category!
+    createColor(name: String!, hexCode: String!): Color!
+    createPresignedPost(filename: String!, fileType: String!): PresignedPost!
   }
 `;

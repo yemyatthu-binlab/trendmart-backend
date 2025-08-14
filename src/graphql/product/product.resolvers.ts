@@ -1,8 +1,20 @@
+import { S3Client } from "@aws-sdk/client-s3";
 import { prisma } from "../../prismaClient";
 import { GraphQLError } from "graphql";
+import { v4 as uuidv4 } from "uuid";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 
 // Helper to convert dollars to cents
 const toCents = (price: number) => Math.round(price * 100);
+
+const s3Client = new S3Client({
+  endpoint: "https://s3.filebase.com",
+  region: "us-east-1", // This is standard for Filebase
+  credentials: {
+    accessKeyId: process.env.FILEBASE_ACCESS_KEY!,
+    secretAccessKey: process.env.FILEBASE_SECRET_KEY!,
+  },
+});
 
 export default {
   Query: {
@@ -31,7 +43,14 @@ export default {
         include: { children: true }, // Include their sub-categories
       });
     },
-
+    getMainSubCategories: async () => {
+      return prisma.category.findMany({
+        where: {
+          parentId: { not: null },
+          isDeletable: false,
+        },
+      });
+    },
     // Fetches all sizes
     getSizes: async () => {
       return prisma.size.findMany();
@@ -142,6 +161,54 @@ export default {
           }
         );
       }
+    },
+
+    createColor: async (
+      _: any,
+      { name, hexCode }: { name: string; hexCode: string }
+    ) => {
+      // Basic validation
+      if (!name || !hexCode) {
+        throw new Error("Name and hex code are required.");
+      }
+      // Check if color already exists (optional but good practice)
+      const existingColor = await prisma.color.findFirst({
+        where: { OR: [{ name }, { hexCode }] },
+      });
+      if (existingColor) {
+        throw new Error("A color with this name or hex code already exists.");
+      }
+
+      return prisma.color.create({
+        data: {
+          name,
+          hexCode,
+        },
+      });
+    },
+
+    createPresignedPost: async (
+      _: any,
+      { filename, fileType }: { filename: string; fileType: string }
+    ) => {
+      const uniqueFilename = `${uuidv4()}-${filename}`;
+      const post = await createPresignedPost(s3Client, {
+        Bucket: process.env.FILEBASE_BUCKET!,
+        Key: uniqueFilename,
+        Fields: {
+          "Content-Type": fileType,
+        },
+        Conditions: [
+          ["content-length-range", 0, 10485760], // up to 10 MB
+          { "Content-Type": fileType },
+        ],
+        Expires: 600, // 10 minutes
+      });
+
+      return {
+        url: post.url,
+        fields: JSON.stringify(post.fields), // Stringify fields for easier transport
+      };
     },
   },
 };
