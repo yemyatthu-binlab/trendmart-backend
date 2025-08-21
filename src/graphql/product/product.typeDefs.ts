@@ -5,6 +5,8 @@ export default `#graphql
     PRIVATE
   }
 
+  scalar Upload
+
   # OBJECT TYPES
   type Product {
     id: ID!
@@ -14,6 +16,12 @@ export default `#graphql
     updatedAt: String!
     variants: [ProductVariant]
     categories: [Category!]
+  }
+
+  # Add this type for the paginated response
+  type ProductListResponse {
+    products: [Product!]!
+    totalCount: Int!
   }
 
   type ProductVariant {
@@ -39,6 +47,7 @@ export default `#graphql
     name: String!
     parent: Category
     children: [Category!]
+    sizes: [Size!]
   }
 
   type Size {
@@ -52,10 +61,11 @@ export default `#graphql
     hexCode: String
   }
 
-  type PresignedPost {
-  url: String!
-  fields: String! # JSON string of fields
-}
+  type UploadedImage {
+    url: String!
+    filename: String!
+  }
+
 
   # INPUT TYPES for Mutations
   input CreateProductImageInput {
@@ -68,7 +78,7 @@ export default `#graphql
     sizeId: Int!
     colorId: Int!
     sku: String
-    price: Float! # We'll handle conversion to cents in the resolver
+    price: Float!
     stock: Int!
     discountPercentage: Float
     images: [CreateProductImageInput!]!
@@ -81,19 +91,50 @@ export default `#graphql
     variants: [CreateProductVariantInput!]!
   }
 
+  # --- Add Input Types for Update ---
+  input UpdateProductImageInput {
+    id: ID # Required for existing images
+    imageUrl: String!
+    altText: String
+    isPrimary: Boolean!
+  }
+
+  input UpdateProductVariantInput {
+    id: ID # Required for existing variants
+    sizeId: Int!
+    colorId: Int!
+    sku: String
+    price: Float!
+    stock: Int!
+    discountPercentage: Float
+    images: [UpdateProductImageInput!]!
+  }
+
+  input UpdateProductInput {
+    name: String
+    description: String
+    categoryIds: [Int!]
+    variants: [UpdateProductVariantInput!]
+  }
+
+
   # QUERIES & MUTATIONS
   type Query {
-    getProducts: [Product]
+    getProducts(skip: Int, take: Int): ProductListResponse
+    getProductById(id: ID!): Product
     getCategories: [Category!]
     getSizes: [Size!]
     getColors: [Color!]
-    getMainSubCategories: [Category!]!   
+    getMainSubCategories: [Category!]!
   }
 
   type Mutation {
     createProduct(input: CreateProductInput!): Product!
+    # --- Add Update and Delete Mutations ---
+    updateProduct(id: ID!, input: UpdateProductInput!): Product!
+    deleteProduct(id: ID!): Product!
     createCategory(name: String!, parentId: Int): Category!
     createColor(name: String!, hexCode: String!): Color!
-    createPresignedPost(filename: String!, fileType: String!): PresignedPost!
+    uploadImage(file: Upload!): UploadedImage!
   }
 `;

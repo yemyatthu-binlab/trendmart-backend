@@ -33,20 +33,36 @@ enum PaymentStatus {
   VERIFICATION_PENDING
 }
 
+enum ReturnReason {
+  DAMAGED
+  WRONG_ITEM
+  SIZE_ISSUE
+  OTHER
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  RETURNED
+  REFUNDED
+}
+
 // MODELS
 
 model User {
-  id           Int        @id @default(autoincrement())
-  fullName     String     @map("full_name")
-  email        String     @unique
-  passwordHash String     @map("password_hash")
-  phoneNumber  String?    @map("phone_number")
-  role         UserRole   @default(CUSTOMER)
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
-  addresses    Address[]
-  cartItems    CartItem[]
-  orders       Order[]
+  id              Int               @id @default(autoincrement())
+  fullName        String            @map("full_name")
+  email           String            @unique
+  passwordHash    String            @map("password_hash")
+  phoneNumber     String?           @map("phone_number")
+  role            UserRole          @default(CUSTOMER)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  addresses       Address[]
+  cartItems       CartItem[]
+  orders          Order[]
+  ProductFeedback ProductFeedback[]
 }
 
 model Address {
@@ -60,24 +76,26 @@ model Address {
   state        String
   postalCode   String   @map("postal_code")
   isDefault    Boolean? @default(false) @map("is_default")
-  user         User     @relation(fields: [userId], references: [id])
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade) // CHANGED
   orders       Order[]
 }
 
 model Product {
-  id          Int              @id @default(autoincrement())
-  name        String
-  description String?
-  createdAt   DateTime         @default(now()) @map("created_at")
-  updatedAt   DateTime         @updatedAt @map("updated_at")
-  variants    ProductVariant[]
-  categories  Category[]       @relation("ProductCategories")
+  id              Int               @id @default(autoincrement())
+  name            String
+  description     String?
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  variants        ProductVariant[]
+  categories      Category[]        @relation("ProductCategories")
+  ProductFeedback ProductFeedback[]
 }
 
 model Size {
-  id       Int              @id @default(autoincrement())
-  value    String           @unique
-  variants ProductVariant[]
+  id         Int              @id @default(autoincrement())
+  value      String           @unique
+  variants   ProductVariant[]
+  categories CategorySize[]
 }
 
 model Color {
@@ -88,24 +106,50 @@ model Color {
 }
 
 model ProductVariant {
-  id                 Int            @id @default(autoincrement())
-  productId          Int            @map("product_id")
-  sizeId             Int            @map("size_id")
-  colorId            Int            @map("color_id")
-  sku                String?        @unique
+  id                 Int               @id @default(autoincrement())
+  productId          Int               @map("product_id")
+  sizeId             Int               @map("size_id")
+  colorId            Int               @map("color_id")
+  sku                String?           @unique
   price              Int // Storing price in cents to avoid floating point issues
-  stock              Int            @default(0) @map("quantity_in_stock")
-  discountPercentage Decimal?       @map("discount_percentage") @db.Decimal(4, 2)
-  discountReachPoint Int?           @map("discount_reach_point")
-  product            Product        @relation(fields: [productId], references: [id])
-  size               Size           @relation(fields: [sizeId], references: [id])
-  color              Color          @relation(fields: [colorId], references: [id])
+  stock              Int               @default(0) @map("quantity_in_stock")
+  discountPercentage Decimal?          @map("discount_percentage") @db.Decimal(4, 2)
+  discountReachPoint Int?              @map("discount_reach_point")
+  product            Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  size               Size              @relation(fields: [sizeId], references: [id])
+  color              Color             @relation(fields: [colorId], references: [id])
   images             ProductImage[]
   cartItems          CartItem[]
   orderItems         OrderItem[]
+  ProductFeedback    ProductFeedback[]
 
   @@unique([productId, sizeId, colorId])
   @@map("product_variants")
+}
+
+model ReturnRequest {
+  id          Int          @id @default(autoincrement())
+  orderItemId Int          @map("order_item_id")
+  reason      ReturnReason
+  status      ReturnStatus @default(REQUESTED)
+  description String?
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  orderItem OrderItem            @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  images    ReturnRequestImage[]
+
+  @@map("return_requests")
+}
+
+model ReturnRequestImage {
+  id              Int    @id @default(autoincrement())
+  returnRequestId Int    @map("return_request_id")
+  imageUrl        String @map("image_url")
+
+  returnRequest ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+
+  @@map("return_request_images")
 }
 
 model ProductImage {
@@ -114,19 +158,36 @@ model ProductImage {
   imageUrl         String         @map("image_url")
   altText          String?        @map("alt_text")
   isPrimary        Boolean        @default(false) @map("is_primary")
-  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
 
   @@map("product_images")
 }
 
+model ProductFeedback {
+  id               Int      @id @default(autoincrement())
+  userId           Int      @map("user_id")
+  productId        Int      @map("product_id")
+  productVariantId Int?     @map("product_variant_id") // optional if tied to specific variant
+  rating           Int      @default(5) // 1–5 stars
+  comment          String?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productVariant ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+
+  @@map("product_feedback")
+}
+
 model Category {
-  id          Int        @id @default(autoincrement())
-  name        String     @unique
-  parentId    Int?       @map("parent_category_id")
-  parent      Category?  @relation("ParentChild", fields: [parentId], references: [id])
-  children    Category[] @relation("ParentChild")
-  products    Product[]  @relation("ProductCategories")
-  isDeletable Boolean    @default(true)
+  id          Int            @id @default(autoincrement())
+  name        String         @unique
+  parentId    Int?           @map("parent_category_id")
+  parent      Category?      @relation("ParentChild", fields: [parentId], references: [id], onDelete: SetNull) // CHANGED
+  children    Category[]     @relation("ParentChild")
+  products    Product[]      @relation("ProductCategories")
+  isDeletable Boolean        @default(true)
+  sizes       CategorySize[]
 }
 
 model CartItem {
@@ -135,8 +196,8 @@ model CartItem {
   productVariantId Int            @map("product_variant_id")
   quantity         Int            @default(1)
   createdAt        DateTime       @default(now()) @map("created_at")
-  user             User           @relation(fields: [userId], references: [id])
-  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade) // CHANGED
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade) // CHANGED
 
   @@unique([userId, productVariantId])
   @@map("cart_items")
@@ -157,14 +218,15 @@ model Order {
 }
 
 model OrderItem {
-  id               Int            @id @default(autoincrement())
-  orderId          Int            @map("order_id")
-  productVariantId Int            @map("product_variant_id")
+  id               Int             @id @default(autoincrement())
+  orderId          Int             @map("order_id")
+  productVariantId Int             @map("product_variant_id")
   quantity         Int
-  priceAtPurchase  Int            @map("price_at_purchase") // Storing price in cents
-  discountApplied  Decimal?       @map("discount_applied") @db.Decimal(5, 2)
-  order            Order          @relation(fields: [orderId], references: [id])
-  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+  priceAtPurchase  Int             @map("price_at_purchase") // Storing price in cents
+  discountApplied  Decimal?        @map("discount_applied") @db.Decimal(5, 2)
+  order            Order           @relation(fields: [orderId], references: [id], onDelete: Cascade) // CHANGED
+  productVariant   ProductVariant  @relation(fields: [productVariantId], references: [id])
+  ReturnRequest    ReturnRequest[]
 
   @@map("order_items")
 }
@@ -179,5 +241,16 @@ model Payment {
   manualPaymentScreenshotUrl String?       @map("manual_payment_screenshot_url")
   createdAt                  DateTime      @default(now()) @map("created_at")
   updatedAt                  DateTime      @updatedAt @map("updated_at")
-  order                      Order         @relation(fields: [orderId], references: [id])
+  order                      Order         @relation(fields: [orderId], references: [id], onDelete: Cascade) // CHANGED
+}
+
+model CategorySize {
+  categoryId Int @map("category_id")
+  sizeId     Int @map("size_id")
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  size     Size     @relation(fields: [sizeId], references: [id], onDelete: Cascade)
+
+  @@id([categoryId, sizeId])
+  @@map("category_sizes")
 }

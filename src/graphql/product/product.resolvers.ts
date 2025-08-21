@@ -1,11 +1,22 @@
-import { S3Client } from "@aws-sdk/client-s3";
 import { prisma } from "../../prismaClient";
 import { GraphQLError } from "graphql";
 import { v4 as uuidv4 } from "uuid";
-import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import {
+  S3Client,
+  PutObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
+import { GraphQLUpload } from "graphql-upload-ts";
+import type { FileUpload } from "graphql-upload-ts";
 
-// Helper to convert dollars to cents
-const toCents = (price: number) => Math.round(price * 100);
+const streamToBuffer = (stream: NodeJS.ReadableStream): Promise<Buffer> => {
+  const chunks: Buffer[] = [];
+  return new Promise((resolve, reject) => {
+    stream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    stream.on("error", (err) => reject(err));
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+};
 
 const s3Client = new S3Client({
   endpoint: "https://s3.filebase.com",
@@ -17,26 +28,68 @@ const s3Client = new S3Client({
 });
 
 export default {
+  Upload: GraphQLUpload,
   Query: {
-    // Fetches a list of all products with their variants, categories, etc.
-    getProducts: async () => {
-      const products = await prisma.product.findMany({
-        include: {
-          categories: true,
-          variants: {
-            include: {
-              size: true,
-              color: true,
-              images: true,
+    getProducts: async (
+      _: any,
+      { skip = 0, take = 10 }: { skip?: number; take?: number }
+    ) => {
+      const [prismaProducts, totalCount] = await prisma.$transaction([
+        prisma.product.findMany({
+          skip,
+          take,
+          orderBy: { createdAt: "desc" },
+          include: {
+            categories: true,
+            variants: {
+              include: {
+                size: true,
+                color: true,
+                images: true,
+              },
             },
           },
-        },
-      });
-      console.log(products);
+        }),
+        prisma.product.count(),
+      ]);
 
-      return products;
+      const products = prismaProducts.map((product) => ({
+        ...product,
+        createdAt: product.createdAt.toISOString(),
+        updatedAt: product.updatedAt.toISOString(),
+      }));
+
+      return {
+        products,
+        totalCount,
+      };
     },
-    // Fetches all categories, useful for dropdowns in the UI
+
+    getProductById: async (_: any, { id }: { id: string }) => {
+      try {
+        const product = await prisma.product.findUniqueOrThrow({
+          where: { id: parseInt(id, 10) },
+          include: {
+            categories: true,
+            variants: {
+              include: {
+                size: true,
+                color: true,
+                images: true,
+              },
+              orderBy: { id: "asc" },
+            },
+          },
+        });
+        return product;
+      } catch (error) {
+        console.error("Failed to get product by id:", error);
+        throw new GraphQLError("Product not found.", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+    },
+
     getCategories: async () => {
       return prisma.category.findMany({
         where: { parentId: null }, // Fetch only top-level categories
@@ -47,15 +100,23 @@ export default {
       return prisma.category.findMany({
         where: {
           parentId: { not: null },
-          isDeletable: false,
+        },
+        include: {
+          // This is the new part that fetches the linked sizes
+          sizes: {
+            include: {
+              size: true, // Include the actual Size object
+            },
+          },
+        },
+        orderBy: {
+          name: "asc",
         },
       });
     },
-    // Fetches all sizes
     getSizes: async () => {
       return prisma.size.findMany();
     },
-    // Fetches all colors
     getColors: async () => {
       return prisma.color.findMany();
     },
@@ -121,8 +182,8 @@ export default {
                 productId: product.id,
                 sizeId,
                 colorId,
-                sku,
-                price: toCents(price), // Convert to cents
+                sku: sku?.trim() ? sku : uuidv4(),
+                price: price,
                 stock,
                 discountPercentage,
                 images: {
@@ -163,6 +224,147 @@ export default {
       }
     },
 
+    updateProduct: async (
+      _: any,
+      { id, input }: { id: string; input: any }
+    ) => {
+      const productId = parseInt(id, 10);
+      const { name, description, categoryIds, variants } = input;
+
+      try {
+        const updatedProduct = await prisma.$transaction(async (tx) => {
+          // 1. Update product's basic details and categories
+          const product = await tx.product.update({
+            where: { id: productId },
+            data: {
+              name,
+              description,
+              categories: categoryIds
+                ? { set: categoryIds.map((cid: number) => ({ id: cid })) }
+                : undefined,
+            },
+          });
+
+          if (variants && variants.length > 0) {
+            // Get current variants and images to compare
+            const currentVariants = await tx.productVariant.findMany({
+              where: { productId: productId },
+              select: { id: true },
+            });
+            const currentVariantIds = currentVariants.map((v) => v.id);
+            const incomingVariantIds = variants
+              .filter((v: any) => v.id)
+              .map((v: any) => parseInt(v.id, 10));
+
+            // 2. Delete variants that are no longer present
+            const variantsToDelete = currentVariantIds.filter(
+              (vid) => !incomingVariantIds.includes(vid)
+            );
+            if (variantsToDelete.length > 0) {
+              await tx.productVariant.deleteMany({
+                where: { id: { in: variantsToDelete } },
+              });
+            }
+
+            // 3. Upsert variants (update existing, create new)
+            for (const variant of variants) {
+              const { images, ...variantData } = variant;
+              const variantId = variant.id
+                ? parseInt(variant.id, 10)
+                : undefined;
+
+              const upsertedVariant = await tx.productVariant.upsert({
+                where: { id: variantId || -1 }, // -1 ensures it doesn't find a match for new variants
+                update: {
+                  ...variantData,
+                  id: undefined, // Don't try to update the ID
+                  price: variantData.price,
+                },
+                create: {
+                  ...variantData,
+                  id: undefined,
+                  productId: product.id,
+                  price: variantData.price,
+                  sku: variantData.sku?.trim() ? variantData.sku : uuidv4(),
+                },
+              });
+
+              // Handle images for the variant
+              if (images && images.length > 0) {
+                const currentImages = await tx.productImage.findMany({
+                  where: { productVariantId: upsertedVariant.id },
+                  select: { id: true },
+                });
+                const currentImageIds = currentImages.map((img) => img.id);
+                const incomingImageIds = images
+                  .filter((img: any) => img.id)
+                  .map((img: any) => parseInt(img.id, 10));
+
+                const imagesToDelete = currentImageIds.filter(
+                  (imgId) => !incomingImageIds.includes(imgId)
+                );
+                if (imagesToDelete.length > 0) {
+                  await tx.productImage.deleteMany({
+                    where: { id: { in: imagesToDelete } },
+                  });
+                }
+
+                for (const image of images) {
+                  await tx.productImage.upsert({
+                    where: { id: image.id ? parseInt(image.id, 10) : -1 },
+                    update: { ...image, id: undefined },
+                    create: {
+                      ...image,
+                      id: undefined,
+                      productVariantId: upsertedVariant.id,
+                    },
+                  });
+                }
+              }
+            }
+          }
+
+          return product;
+        });
+
+        // Re-fetch the fully updated product to return
+        return prisma.product.findUniqueOrThrow({
+          where: { id: updatedProduct.id },
+          include: {
+            categories: true,
+            variants: { include: { size: true, color: true, images: true } },
+          },
+        });
+      } catch (error) {
+        console.error("Failed to update product:", error);
+        throw new GraphQLError("Could not update product.", {
+          extensions: { code: "INTERNAL_SERVER_ERROR" },
+        });
+      }
+    },
+
+    deleteProduct: async (_: any, { id }: { id: string }) => {
+      const productId = parseInt(id, 10);
+      try {
+        // Prisma's cascading delete will handle related variants and images if the schema is set up correctly.
+        const deletedProduct = await prisma.product.delete({
+          where: { id: productId },
+        });
+        return deletedProduct;
+      } catch (error: any) {
+        // Handle case where product is not found
+        if (error.code === "P2025") {
+          throw new GraphQLError("Product not found.", {
+            extensions: { code: "NOT_FOUND" },
+          });
+        }
+        console.error("Failed to delete product:", error);
+        throw new GraphQLError("Could not delete product.", {
+          extensions: { code: "INTERNAL_SERVER_ERROR" },
+        });
+      }
+    },
+
     createColor: async (
       _: any,
       { name, hexCode }: { name: string; hexCode: string }
@@ -187,28 +389,53 @@ export default {
       });
     },
 
-    createPresignedPost: async (
-      _: any,
-      { filename, fileType }: { filename: string; fileType: string }
-    ) => {
+    uploadImage: async (_: any, { file }: { file: Promise<FileUpload> }) => {
+      const { createReadStream, filename, mimetype } = await file;
+
+      // Create a readable stream from the uploaded file
+      const stream = createReadStream();
+
+      // Generate a unique filename to prevent overwriting files in the bucket
       const uniqueFilename = `${uuidv4()}-${filename}`;
-      const post = await createPresignedPost(s3Client, {
+
+      // Convert the stream to a buffer to upload
+      const buffer = await streamToBuffer(stream);
+
+      const command = new PutObjectCommand({
         Bucket: process.env.FILEBASE_BUCKET!,
         Key: uniqueFilename,
-        Fields: {
-          "Content-Type": fileType,
-        },
-        Conditions: [
-          ["content-length-range", 0, 10485760], // up to 10 MB
-          { "Content-Type": fileType },
-        ],
-        Expires: 600, // 10 minutes
+        Body: buffer,
+        ContentType: mimetype,
       });
 
-      return {
-        url: post.url,
-        fields: JSON.stringify(post.fields), // Stringify fields for easier transport
-      };
+      try {
+        await s3Client.send(command);
+
+        const headCommand = new HeadObjectCommand({
+          Bucket: process.env.FILEBASE_BUCKET!,
+          Key: uniqueFilename,
+        });
+
+        const headResult = await s3Client.send(headCommand);
+        const cid =
+          headResult.Metadata?.cid || headResult.Metadata?.["ipfs-hash"];
+
+        if (!cid) {
+          throw new Error("CID not found in file metadata.");
+        }
+
+        const gatewayUrl = `https://${process.env.FILEBASE_GATEWAY_NAME}.myfilebase.com/ipfs/${cid}`;
+
+        return {
+          url: gatewayUrl,
+          filename: uniqueFilename,
+        };
+      } catch (error) {
+        console.error("Failed to upload image to S3:", error);
+        throw new GraphQLError("Image upload failed.", {
+          extensions: { code: "INTERNAL_SERVER_ERROR" },
+        });
+      }
     },
   },
 };

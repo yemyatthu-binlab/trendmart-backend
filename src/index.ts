@@ -4,19 +4,23 @@ import { ApolloServer } from "apollo-server-express";
 import { typeDefs } from "./graphql/index";
 import { resolvers } from "./graphql/index";
 import dotenv from "dotenv";
+import cors from "cors";
+import { graphqlUploadExpress } from "graphql-upload-ts";
 
 // Load environment variables
 dotenv.config();
 
 const startServer = async () => {
   const app = express();
-
+  app.use(graphqlUploadExpress({ maxFileSize: 10000000, maxFiles: 10 }));
   const server = new ApolloServer({
     typeDefs,
     resolvers,
   });
 
   await server.start();
+  app.use(cors());
+  app.use(express.json());
 
   server.applyMiddleware({ app, path: "/graphql" });
 
