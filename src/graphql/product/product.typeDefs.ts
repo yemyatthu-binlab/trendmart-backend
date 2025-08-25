@@ -5,6 +5,12 @@ export default `#graphql
     PRIVATE
   }
 
+  enum SortOrder {
+    asc
+    desc
+  }
+
+
   scalar Upload
 
   # OBJECT TYPES
@@ -16,6 +22,11 @@ export default `#graphql
     updatedAt: String!
     variants: [ProductVariant]
     categories: [Category!]
+  }
+
+  type PublicProductListResponse {
+    products: [Product!]!
+    totalCount: Int!
   }
 
   # Add this type for the paginated response
@@ -117,10 +128,26 @@ export default `#graphql
     variants: [UpdateProductVariantInput!]
   }
 
+  input ProductFilterInput {
+    search: String
+    categoryIds: [Int!]
+  }
+
+  input ProductSortInput {
+    field: String # e.g., "createdAt", "price"
+    order: SortOrder
+  }
 
   # QUERIES & MUTATIONS
   type Query {
     getProducts(skip: Int, take: Int): ProductListResponse
+    listPublicProducts(
+      skip: Int,
+      take: Int,
+      filter: ProductFilterInput,
+      sort: ProductSortInput
+    ): PublicProductListResponse
+
     getProductById(id: ID!): Product
     getCategories: [Category!]
     getSizes: [Size!]

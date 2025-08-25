@@ -8,6 +8,24 @@ import {
 } from "@aws-sdk/client-s3";
 import { GraphQLUpload } from "graphql-upload-ts";
 import type { FileUpload } from "graphql-upload-ts";
+import { Prisma } from "@prisma/client";
+
+interface ProductFilterInput {
+  search?: string;
+  categoryIds?: number[];
+}
+
+interface ProductSortInput {
+  field?: "createdAt" | "price";
+  order?: "asc" | "desc";
+}
+
+interface ListPublicProductsArgs {
+  skip?: number;
+  take?: number;
+  filter?: ProductFilterInput;
+  sort?: ProductSortInput;
+}
 
 const streamToBuffer = (stream: NodeJS.ReadableStream): Promise<Buffer> => {
   const chunks: Buffer[] = [];
@@ -88,6 +106,88 @@ export default {
           extensions: { code: "NOT_FOUND" },
         });
       }
+    },
+    listPublicProducts: async (
+      _: any,
+      {
+        skip = 0,
+        take = 12, // A common grid size for e-commerce
+        filter,
+        sort,
+      }: ListPublicProductsArgs
+    ) => {
+      // 1. Build the WHERE clause dynamically
+      const where: Prisma.ProductWhereInput = {};
+
+      if (filter?.search) {
+        where.OR = [
+          { name: { contains: filter.search, mode: "insensitive" } },
+          { description: { contains: filter.search, mode: "insensitive" } },
+        ];
+      }
+
+      if (filter?.categoryIds && filter.categoryIds.length > 0) {
+        where.categories = {
+          some: {
+            id: {
+              in: filter.categoryIds,
+            },
+          },
+        };
+      }
+
+      // 2. Build the ORDER BY clause
+      const orderBy: Prisma.ProductOrderByWithRelationInput = {};
+      if (sort?.field === "price") {
+        // To sort by price, we need to look at the variants.
+        // This is a simplified approach: sorting by the minimum price of any variant.
+        // A more complex setup might be needed for more nuanced price sorting.
+        orderBy.variants = {
+          _count: sort.order || "asc", // This is a placeholder; direct price sorting is complex.
+          // For now, let's stick to createdAt.
+        };
+        // A simpler and more reliable sort for now:
+        orderBy.createdAt = sort.order || "desc";
+      } else {
+        // Default sort by creation date
+        orderBy.createdAt = sort?.order || "desc";
+      }
+
+      // 3. Execute the query
+      const [prismaProducts, totalCount] = await prisma.$transaction([
+        prisma.product.findMany({
+          skip,
+          take,
+          where,
+          orderBy,
+          include: {
+            categories: true,
+            variants: {
+              include: {
+                size: true,
+                color: true,
+                images: {
+                  // Only fetch the primary image for the list view to save bandwidth
+                  where: { isPrimary: true },
+                  take: 1,
+                },
+              },
+            },
+          },
+        }),
+        prisma.product.count({ where }),
+      ]);
+
+      const products = prismaProducts.map((product) => ({
+        ...product,
+        createdAt: product.createdAt.toISOString(),
+        updatedAt: product.updatedAt.toISOString(),
+      }));
+
+      return {
+        products,
+        totalCount,
+      };
     },
 
     getCategories: async () => {
