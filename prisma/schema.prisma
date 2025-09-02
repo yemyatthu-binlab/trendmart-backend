@@ -59,6 +59,9 @@ model User {
   role            UserRole          @default(CUSTOMER)
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
+  emailVerifiedAt DateTime?         @map("email_verified_at")
+  otpSecret       String?           @map("otp_secret")
+  otpExpiresAt    DateTime?         @map("otp_expires_at")
   addresses       Address[]
   cartItems       CartItem[]
   orders          Order[]
@@ -73,7 +76,7 @@ model Address {
   addressLine1 String   @map("address_line1")
   addressLine2 String?  @map("address_line2")
   city         String
-  state        String
+  state        String?
   postalCode   String   @map("postal_code")
   isDefault    Boolean? @default(false) @map("is_default")
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade) // CHANGED

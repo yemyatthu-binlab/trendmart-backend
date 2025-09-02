@@ -7,7 +7,7 @@
     "allowJs": true, // Allow JavaScript files to be compiled.
     "resolveJsonModule": true, // Allows importing JSON files.
     "moduleDetection": "force", // Ensures files are treated as modules.
-
+    "jsx": "react-jsx",
     /* Module Resolution */
     "module": "CommonJS", // The output module format for Node.js.
     "moduleResolution": "node", // How TypeScript finds modules.
