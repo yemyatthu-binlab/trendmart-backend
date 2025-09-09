@@ -60,6 +60,9 @@ export default {
           include: {
             categories: true,
             variants: {
+              where: {
+                isArchived: false,
+              },
               include: {
                 size: true,
                 color: true,
@@ -90,6 +93,9 @@ export default {
           include: {
             categories: true,
             variants: {
+              where: {
+                isArchived: false,
+              },
               include: {
                 size: true,
                 color: true,
@@ -97,9 +103,38 @@ export default {
               },
               orderBy: { id: "asc" },
             },
+            ProductFeedback: {
+              include: { user: true },
+              orderBy: { createdAt: "desc" },
+            },
           },
         });
-        return product;
+        if (!product) {
+          return null;
+        }
+        const feedback = product.ProductFeedback;
+        const totalReviews = feedback.length;
+        const averageRating =
+          totalReviews > 0
+            ? feedback.reduce((sum, f) => sum + f.rating, 0) / totalReviews
+            : 0;
+        const ratingCounts = [
+          { star: 5, count: feedback.filter((f) => f.rating === 5).length },
+          { star: 4, count: feedback.filter((f) => f.rating === 4).length },
+          { star: 3, count: feedback.filter((f) => f.rating === 3).length },
+          { star: 2, count: feedback.filter((f) => f.rating === 2).length },
+          { star: 1, count: feedback.filter((f) => f.rating === 1).length },
+        ];
+
+        return {
+          ...product,
+          createdAt: product.createdAt.toISOString(),
+          updatedAt: product.updatedAt.toISOString(),
+          feedback,
+          averageRating,
+          totalReviews,
+          ratingCounts,
+        };
       } catch (error) {
         console.error("Failed to get product by id:", error);
         throw new GraphQLError("Product not found.", {
@@ -163,6 +198,9 @@ export default {
           include: {
             categories: true,
             variants: {
+              where: {
+                isArchived: false,
+              },
               include: {
                 size: true,
                 color: true,
@@ -305,6 +343,9 @@ export default {
           include: {
             categories: true,
             variants: {
+              where: {
+                isArchived: false,
+              },
               include: {
                 size: true,
                 color: true,
@@ -349,36 +390,48 @@ export default {
             // Get current variants and images to compare
             const currentVariants = await tx.productVariant.findMany({
               where: { productId: productId },
-              select: { id: true },
+              select: { id: true, sizeId: true, colorId: true },
             });
-            const currentVariantIds = currentVariants.map((v) => v.id);
-            const incomingVariantIds = variants
-              .filter((v: any) => v.id)
-              .map((v: any) => parseInt(v.id, 10));
 
-            // 2. Delete variants that are no longer present
-            const variantsToDelete = currentVariantIds.filter(
-              (vid) => !incomingVariantIds.includes(vid)
+            const incomingVariantKeys = new Set(
+              variants.map((v: any) => `${v.sizeId}-${v.colorId}`)
             );
-            if (variantsToDelete.length > 0) {
-              await tx.productVariant.deleteMany({
-                where: { id: { in: variantsToDelete } },
+
+            const variantsToArchiveIds = currentVariants
+              .filter(
+                (cv) => !incomingVariantKeys.has(`${cv.sizeId}-${cv.colorId}`)
+              )
+              .map((cv) => cv.id);
+
+            if (variantsToArchiveIds.length > 0) {
+              await tx.productVariant.updateMany({
+                where: { id: { in: variantsToArchiveIds } },
+                data: { isArchived: true },
               });
             }
 
             // 3. Upsert variants (update existing, create new)
             for (const variant of variants) {
               const { images, ...variantData } = variant;
-              const variantId = variant.id
-                ? parseInt(variant.id, 10)
-                : undefined;
+              // const variantId = variant.id
+              //   ? parseInt(variant.id, 10)
+              //   : undefined;
 
               const upsertedVariant = await tx.productVariant.upsert({
-                where: { id: variantId || -1 }, // -1 ensures it doesn't find a match for new variants
+                where: {
+                  productId_sizeId_colorId: {
+                    productId: productId,
+                    sizeId: variant.sizeId,
+                    colorId: variant.colorId,
+                  },
+                },
                 update: {
                   ...variantData,
-                  id: undefined, // Don't try to update the ID
+                  id: undefined,
+                  sku: variantData.sku,
                   price: variantData.price,
+                  stock: variantData.stock,
+                  isArchived: false,
                 },
                 create: {
                   ...variantData,
@@ -432,7 +485,12 @@ export default {
           where: { id: updatedProduct.id },
           include: {
             categories: true,
-            variants: { include: { size: true, color: true, images: true } },
+            variants: {
+              where: {
+                isArchived: false,
+              },
+              include: { size: true, color: true, images: true },
+            },
           },
         });
       } catch (error) {
@@ -487,6 +545,46 @@ export default {
           hexCode,
         },
       });
+    },
+    createProductFeedback: async (
+      _: any,
+      {
+        input,
+      }: { input: { productId: number; rating: number; comment?: string } },
+      context: any // This is where you would get the authenticated user
+    ) => {
+      // In a real app, you'd check context.user to ensure the user is logged in
+      const userId = context.userId; // Assuming you have a way to get the current user's ID from the context
+
+      // Check if a user has already reviewed this product
+      const existingFeedback = await prisma.productFeedback.findFirst({
+        where: {
+          userId: userId,
+          productId: input.productId,
+        },
+      });
+
+      if (existingFeedback) {
+        throw new Error("You have already reviewed this product.");
+      }
+
+      // Create the new feedback entry
+      const newFeedback = await prisma.productFeedback.create({
+        data: {
+          userId: userId,
+          productId: input.productId,
+          rating: input.rating,
+          comment: input.comment,
+        },
+        include: {
+          user: true, // To return the user data with the new feedback
+        },
+      });
+
+      return {
+        ...newFeedback,
+        createdAt: newFeedback.createdAt.toISOString(),
+      };
     },
 
     uploadImage: async (_: any, { file }: { file: Promise<FileUpload> }) => {

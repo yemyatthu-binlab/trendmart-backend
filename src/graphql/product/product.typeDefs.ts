@@ -10,6 +10,13 @@ export default `#graphql
     desc
   }
 
+  enum FeedbackRating {
+    ONE
+    TWO
+    THREE
+    FOUR
+    FIVE
+  }
 
   scalar Upload
 
@@ -22,7 +29,26 @@ export default `#graphql
     updatedAt: String!
     variants: [ProductVariant]
     categories: [Category!]
+    feedback: [ProductFeedback!] # New field to get all feedback for a product
+    averageRating: Float # New field for average rating
+    totalReviews: Int # New field for total reviews
+    ratingCounts: [RatingCount!] # New field for rating counts
+
   }
+
+  type ProductFeedback {
+    id: ID!
+    rating: Int!
+    comment: String
+    createdAt: String!
+    user: User!
+  }
+
+  type RatingCount {
+    star: Int!
+    count: Int!
+  }
+
 
   type PublicProductListResponse {
     products: [Product!]!
@@ -128,6 +154,12 @@ export default `#graphql
     variants: [UpdateProductVariantInput!]
   }
 
+  input CreateProductFeedbackInput {
+    productId: Int!
+    rating: Int!
+    comment: String
+  }
+
   input ProductFilterInput {
     search: String
     categoryIds: [Int!]
@@ -163,5 +195,6 @@ export default `#graphql
     createCategory(name: String!, parentId: Int): Category!
     createColor(name: String!, hexCode: String!): Color!
     uploadImage(file: Upload!): UploadedImage!
+    createProductFeedback(input: CreateProductFeedbackInput!): ProductFeedback!
   }
 `;

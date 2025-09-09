@@ -4,7 +4,7 @@ import { OrderStatus } from "@prisma/client";
 import { prisma } from "../../prismaClient";
 import { GraphQLError } from "graphql";
 import { UserInputError, AuthenticationError } from "apollo-server-express";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
 import type { FileUpload } from "graphql-upload-ts";
 import OrderNotificationTemplate from "../../emails/OrderNotificationTemplate";
@@ -233,6 +233,61 @@ export default {
           ...item,
           priceAtPurchase: item.priceAtPurchase,
         })),
+      };
+    },
+    findMyOrderForReturn: async (
+      _: any,
+      { orderId }: { orderId: string },
+      { userId }: any // Assuming you get userId from context after authentication
+    ) => {
+      if (!userId) {
+        throw new GraphQLError("You must be logged in to find an order.", {
+          extensions: { code: "UNAUTHENTICATED" },
+        });
+      }
+
+      // We use the public-facing order ID if it's a string, or parse if it's a number
+      // For this example, I'll assume it's a numeric ID passed as a string
+      const numericOrderId = parseInt(orderId, 10);
+      if (isNaN(numericOrderId)) {
+        throw new GraphQLError("Invalid Order ID format.", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      const order = await prisma.order.findFirst({
+        where: {
+          id: numericOrderId,
+          userId: userId, // CRITICAL: Ensures users can only see their own orders
+        },
+        include: {
+          items: {
+            include: {
+              productVariant: {
+                include: {
+                  product: true, // Fetch base product info
+                  size: true,
+                  color: true,
+                  images: { where: { isPrimary: true }, take: 1 },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!order) {
+        throw new GraphQLError("Order not found.", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Optional: Add logic to check if the order is eligible for return
+      // e.g., status is DELIVERED and it's within 7 days of creation/delivery
+
+      return {
+        ...order,
+        orderTotal: parseFloat(order.orderTotal.toString()),
       };
     },
   },
@@ -488,6 +543,133 @@ export default {
         console.error("Order status update failed:", error);
         if (error instanceof UserInputError) throw error;
         throw new Error("Could not update order status. Please try again.");
+      }
+    },
+    createReturnRequest: async (
+      _: any,
+      { input }: { input: any /* CreateReturnRequestInput */ },
+      { prisma, userId }: GQLContext
+    ) => {
+      if (!userId) {
+        throw new GraphQLError("You must be logged in.", {
+          extensions: { code: "UNAUTHENTICATED" },
+        });
+      }
+
+      const { items, phoneNumber } = input;
+
+      const orderItemIds = items.map((item: any) => parseInt(item.orderItemId));
+      const validOrderItems = await prisma.orderItem.findMany({
+        where: {
+          id: { in: orderItemIds },
+          order: { userId: userId }, // Security check: ensure items belong to the user
+        },
+        select: { id: true },
+      });
+
+      if (validOrderItems.length !== orderItemIds.length) {
+        throw new GraphQLError(
+          "One or more items are invalid or do not belong to you.",
+          { extensions: { code: "FORBIDDEN" } }
+        );
+      }
+
+      try {
+        await prisma.$transaction(async (tx) => {
+          for (const item of items) {
+            const returnRequest = await tx.returnRequest.create({
+              data: {
+                orderItemId: parseInt(item.orderItemId),
+                reason: item.reason as ReturnReason,
+                status: "REQUESTED",
+                description: `${
+                  item.description || "No description provided."
+                }\n\nCustomer Phone: ${phoneNumber}`,
+              },
+            });
+
+            if (item.imageUrls && item.imageUrls.length > 0) {
+              await tx.returnRequestImage.createMany({
+                data: item.imageUrls.map((url: string) => ({
+                  returnRequestId: returnRequest.id,
+                  imageUrl: url,
+                })),
+              });
+            }
+          }
+        });
+      } catch (error) {
+        console.error("Failed to create return request:", error);
+        throw new GraphQLError("Could not process your return request.", {
+          extensions: { code: "INTERNAL_SERVER_ERROR" },
+        });
+      }
+
+      return true;
+    },
+    uploadReturnImage: async (
+      _: any,
+      { file }: { file: Promise<FileUpload> }
+    ) => {
+      const { createReadStream, filename, mimetype } = await file;
+
+      // 👉 Step 1: Validate that the file is an image (from your original code)
+      if (!mimetype.startsWith("image/")) {
+        throw new GraphQLError("File must be an image.", {
+          extensions: { code: "BAD_USER_INPUT" },
+        });
+      }
+
+      const stream = createReadStream();
+
+      // 👉 Step 2: Use a unique filename with the "returns/" prefix for organization
+      const uniqueFilename = `returns/${uuidv4()}-${filename}`;
+
+      const buffer = await streamToBuffer(stream);
+
+      // 👉 Step 3: Upload the object to your Filebase bucket
+      const putCommand = new PutObjectCommand({
+        Bucket: process.env.FILEBASE_BUCKET!,
+        Key: uniqueFilename,
+        Body: buffer,
+        ContentType: mimetype,
+      });
+
+      try {
+        await s3Client.send(putCommand);
+
+        // 👉 Step 4: Immediately fetch the object's metadata to get the IPFS CID
+        const headCommand = new HeadObjectCommand({
+          Bucket: process.env.FILEBASE_BUCKET!,
+          Key: uniqueFilename,
+        });
+
+        const headResult = await s3Client.send(headCommand);
+
+        // Filebase stores the IPFS CID in the metadata
+        const cid = headResult.Metadata?.cid;
+
+        if (!cid) {
+          console.error(
+            "CID not found in file metadata for key:",
+            uniqueFilename
+          );
+          throw new Error("Could not retrieve IPFS CID from uploaded file.");
+        }
+
+        // 👉 Step 5: Construct the public gateway URL
+        const gatewayUrl = `https://${process.env.FILEBASE_GATEWAY_NAME}.myfilebase.com/ipfs/${cid}`;
+
+        // Return the URL and the filename for the client
+        return {
+          url: gatewayUrl,
+          filename: uniqueFilename,
+        };
+      } catch (error) {
+        console.error("Failed to upload return image:", error);
+        throw new GraphQLError("Image upload failed.", {
+          extensions: { code: "INTERNAL_SERVER_ERROR" },
+        });
       }
     },
   },

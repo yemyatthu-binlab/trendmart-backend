@@ -116,6 +116,7 @@ model ProductVariant {
   sku                String?           @unique
   price              Int // Storing price in cents to avoid floating point issues
   stock              Int               @default(0) @map("quantity_in_stock")
+  isArchived         Boolean           @default(false)
   discountPercentage Decimal?          @map("discount_percentage") @db.Decimal(4, 2)
   discountReachPoint Int?              @map("discount_reach_point")
   product            Product           @relation(fields: [productId], references: [id], onDelete: Cascade)

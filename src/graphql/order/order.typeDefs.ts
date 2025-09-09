@@ -8,6 +8,22 @@ export default `#graphql
     CANCELLED
   }
 
+  enum ReturnReason {
+    DAMAGED
+    WRONG_ITEM
+    SIZE_ISSUE
+    OTHER
+  }
+
+  enum ReturnStatus {
+    REQUESTED
+    APPROVED
+    REJECTED
+    RETURNED
+    REFUNDED
+  }
+
+
   enum PaymentMethod {
     STRIPE
     MANUAL_UPLOAD
@@ -108,6 +124,17 @@ export default `#graphql
     saveAddress: Boolean
   }
 
+  input ReturnRequestItemInput {
+    orderItemId: ID!
+    reason: ReturnReason!
+    description: String
+    imageUrls: [String!]!
+  }
+
+  input CreateReturnRequestInput {
+    items: [ReturnRequestItemInput!]!
+    phoneNumber: String!
+  }
 
   # QUERIES (Your existing queries are preserved)
   type Query {
@@ -115,6 +142,7 @@ export default `#graphql
     getOrderById(id: ID!): Order
     getMyOrders(skip: Int, take: Int): OrderListResponse!
     getMyOrderById(id: ID!): Order
+    findMyOrderForReturn(orderId: String!): Order
   }
 
   # NEW: MUTATIONS for creating an order
@@ -129,5 +157,7 @@ export default `#graphql
     """
     createOrder(input: CreateOrderInput!): Order!
     updateOrderStatus(orderId: ID!, status: OrderStatus!): Order!
+    createReturnRequest(input: CreateReturnRequestInput!): Boolean!
+    uploadReturnImage(file: Upload!): UploadedFileResponse!
   }
 `;
