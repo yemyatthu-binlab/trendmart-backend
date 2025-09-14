@@ -181,8 +181,6 @@ export default {
           _count: sort.order || "asc", // This is a placeholder; direct price sorting is complex.
           // For now, let's stick to createdAt.
         };
-        // A simpler and more reliable sort for now:
-        orderBy.createdAt = sort.order || "desc";
       } else {
         // Default sort by creation date
         orderBy.createdAt = sort?.order || "desc";

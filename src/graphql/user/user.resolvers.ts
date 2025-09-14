@@ -18,6 +18,9 @@ const JWT_SECRET = process.env.JWT_SECRET || "your-super-secret-key";
 // Gmail account for this to work.
 const transporter = nodemailer.createTransport({
   service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465, // SSL port
+  secure: true, // Must be true for port 465
   auth: {
     user: process.env.GMAIL_USER, // Your Gmail address from .env file
     pass: process.env.GMAIL_APP_PASSWORD, // Your Gmail App Password from .env file

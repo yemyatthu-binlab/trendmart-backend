@@ -4,7 +4,11 @@ import { OrderStatus } from "@prisma/client";
 import { prisma } from "../../prismaClient";
 import { GraphQLError } from "graphql";
 import { UserInputError, AuthenticationError } from "apollo-server-express";
-import { HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
 import type { FileUpload } from "graphql-upload-ts";
 import OrderNotificationTemplate from "../../emails/OrderNotificationTemplate";
@@ -30,6 +34,9 @@ const streamToBuffer = (stream: any): Promise<Buffer> => {
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465, // SSL port
+  secure: true, // Must be true for port 465
   auth: {
     user: process.env.GMAIL_USER, // Your Gmail address from .env file
     pass: process.env.GMAIL_APP_PASSWORD, // Your Gmail App Password from .env file
