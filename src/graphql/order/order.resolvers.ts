@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 import { render } from "@react-email/render";
-import { OrderStatus } from "@prisma/client";
+import { OrderStatus, ReturnReason, ReturnStatus } from "@prisma/client";
 import { prisma } from "../../prismaClient";
 import { GraphQLError } from "graphql";
 import { UserInputError, AuthenticationError } from "apollo-server-express";
@@ -297,10 +297,154 @@ export default {
         orderTotal: parseFloat(order.orderTotal.toString()),
       };
     },
+    getReturnRequests: async (
+      _: any,
+      {
+        skip = 0,
+        take = 10,
+        status,
+      }: { skip?: number; take?: number; status?: ReturnStatus }
+    ) => {
+      const where = status ? { status } : {};
+
+      const [returnRequests, totalCount] = await Promise.all([
+        prisma.returnRequest.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { createdAt: "desc" },
+          include: {
+            images: true,
+            orderItem: {
+              include: {
+                productVariant: {
+                  include: {
+                    product: true,
+                    size: true,
+                    color: true,
+                  },
+                },
+                order: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+        prisma.returnRequest.count({ where }),
+      ]);
+
+      return { returnRequests, totalCount };
+    },
+    getReturnRequestById: async (_: any, { id }: { id: string }) => {
+      const returnRequest = await prisma.returnRequest.findUnique({
+        where: { id: parseInt(id) },
+        include: {
+          images: true,
+          orderItem: {
+            include: {
+              productVariant: {
+                include: {
+                  product: true,
+                  size: true,
+                  color: true,
+                  images: true, // Get original product image
+                },
+              },
+              order: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!returnRequest) {
+        throw new GraphQLError("Return request not found.", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      return returnRequest;
+    },
+    getMyReturnRequests: async (
+      _: any,
+      args: { skip?: number; take?: number },
+      { userId }: any
+    ) => {
+      // 1. Check for authentication
+      if (!userId) {
+        throw new GraphQLError("You must be logged in to see your requests.", {
+          extensions: { code: "UNAUTHENTICATED" },
+        });
+      }
+
+      // const userId = context.user.id;
+      const skip = args.skip || 0;
+      const take = args.take || 20;
+
+      // 2. Define the WHERE clause to filter by the current user
+      const whereClause = {
+        orderItem: {
+          order: {
+            userId: userId,
+          },
+        },
+      };
+
+      // 3. Fetch the list of return requests with pagination
+      const returnRequests = await prisma.returnRequest.findMany({
+        where: whereClause,
+        skip,
+        take,
+        orderBy: {
+          createdAt: "desc", // Show the most recent requests first
+        },
+        // Include all related data needed for the frontend
+        include: {
+          images: true, // The damage photos uploaded by the user
+          orderItem: {
+            include: {
+              productVariant: {
+                include: {
+                  product: true,
+                  color: true, // For variant info
+                  size: true, // For variant info
+                  images: {
+                    take: 1, // We only need one image for the list view
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // 4. Get the total count for pagination purposes
+      const totalCount = await prisma.returnRequest.count({
+        where: whereClause,
+      });
+
+      // 5. Return the response in the expected shape
+      return {
+        returnRequests,
+        totalCount,
+      };
+    },
   },
   OrderItem: {
     product: (parent: any) => {
       return parent.productVariant.product;
+    },
+    order: async (parent: any) => {
+      return prisma.order.findUnique({
+        where: { id: parent.orderId },
+        include: { user: true }, // Include user if needed elsewhere
+      });
     },
   },
   Mutation: {
@@ -555,7 +699,7 @@ export default {
     createReturnRequest: async (
       _: any,
       { input }: { input: any /* CreateReturnRequestInput */ },
-      { prisma, userId }: GQLContext
+      { userId }: { userId?: number }
     ) => {
       if (!userId) {
         throw new GraphQLError("You must be logged in.", {
@@ -678,6 +822,36 @@ export default {
           extensions: { code: "INTERNAL_SERVER_ERROR" },
         });
       }
+    },
+    updateReturnRequestStatus: async (
+      _: any,
+      {
+        returnRequestId,
+        status,
+      }: { returnRequestId: string; status: ReturnStatus }
+    ) => {
+      const returnRequest = await prisma.returnRequest.findUnique({
+        where: { id: parseInt(returnRequestId) },
+      });
+
+      if (!returnRequest) {
+        throw new GraphQLError("Return request not found.", {
+          extensions: { code: "NOT_FOUND" },
+        });
+      }
+
+      // Logic to prevent invalid status transitions can be added here
+      // For example, you can't go from REJECTED to APPROVED.
+
+      const updatedRequest = await prisma.returnRequest.update({
+        where: { id: parseInt(returnRequestId) },
+        data: { status },
+      });
+
+      // As requested, we DO NOT update product stock here.
+      // The item might be damaged and not suitable for resale.
+
+      return updatedRequest;
     },
   },
 };

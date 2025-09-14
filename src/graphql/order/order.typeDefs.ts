@@ -1,11 +1,11 @@
 export default `#graphql
   # ENUMS (from your Prisma schema)
   enum OrderStatus {
-    PENDING_PAYMENT
-    PROCESSING
-    SHIPPED
-    DELIVERED
-    CANCELLED
+      PENDING_PAYMENT
+      PROCESSING
+      SHIPPED
+      DELIVERED
+      CANCELLED
   }
 
   enum ReturnReason {
@@ -23,7 +23,6 @@ export default `#graphql
     REFUNDED
   }
 
-
   enum PaymentMethod {
     STRIPE
     MANUAL_UPLOAD
@@ -37,9 +36,6 @@ export default `#graphql
   }
 
   # OBJECT TYPES
-  # Note: Assuming User, Product, Address, and ProductVariant are defined elsewhere or here.
-
-  # This Address type is required by the 'Order' type below.
   type Address {
     id: ID!
     fullName: String!
@@ -56,7 +52,7 @@ export default `#graphql
     fullName: String!
     role: UserRole!
     createdAt: String!
-    addresses: [Address!]!   # <-- NEW FIELD
+    addresses: [Address!]!
   }
 
   type Order {
@@ -77,6 +73,8 @@ export default `#graphql
     priceAtPurchase: Float!
     productVariant: ProductVariant!
     product: Product!
+    # NEW: Include the order it belongs to for easier traversal
+    order: Order!
   }
 
   type Payment {
@@ -89,13 +87,35 @@ export default `#graphql
     createdAt: String!
   }
 
-  # Response type for your existing paginated queries
+  # NEW: Types for Return Requests
+  type ReturnRequestImage {
+    id: ID!
+    imageUrl: String!
+  }
+
+  type ReturnRequest {
+    id: ID!
+    reason: ReturnReason!
+    status: ReturnStatus!
+    description: String
+    createdAt: String!
+    updatedAt: String!
+    orderItem: OrderItem!
+    images: [ReturnRequestImage!]!
+  }
+
+  # Response types for paginated queries
   type OrderListResponse {
     orders: [Order!]!
     totalCount: Int!
   }
 
-  # NEW: Response type for the file upload mutation
+  # NEW: Response type for paginated return requests
+  type ReturnRequestListResponse {
+    returnRequests: [ReturnRequest!]!
+    totalCount: Int!
+  }
+  
   type UploadedFileResponse {
     url: String!
   }
@@ -143,21 +163,21 @@ export default `#graphql
     getMyOrders(skip: Int, take: Int): OrderListResponse!
     getMyOrderById(id: ID!): Order
     findMyOrderForReturn(orderId: String!): Order
+
+    # NEW: Queries for admin to manage returns
+    getReturnRequests(skip: Int, take: Int, status: ReturnStatus): ReturnRequestListResponse!
+    getReturnRequestById(id: ID!): ReturnRequest
+    getMyReturnRequests(skip: Int, take: Int): ReturnRequestListResponse!
   }
 
-  # NEW: MUTATIONS for creating an order
+  # MUTATIONS
   type Mutation {
-    """
-    Uploads a payment screenshot file and returns its public URL.
-    """
     uploadPaymentScreenshot(file: Upload!): UploadedFileResponse!
-
-    """
-    Creates a new order after validating stock, address, and payment info.
-    """
     createOrder(input: CreateOrderInput!): Order!
     updateOrderStatus(orderId: ID!, status: OrderStatus!): Order!
     createReturnRequest(input: CreateReturnRequestInput!): Boolean!
     uploadReturnImage(file: Upload!): UploadedFileResponse!
+    # NEW: Mutation for admin to update return status
+    updateReturnRequestStatus(returnRequestId: ID!, status: ReturnStatus!): ReturnRequest!
   }
 `;
