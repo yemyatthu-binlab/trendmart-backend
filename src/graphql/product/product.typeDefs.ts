@@ -103,6 +103,14 @@ export default `#graphql
     filename: String!
   }
 
+  type TopSellingProduct {
+    productName: String!
+    variantInfo: String! # e.g., "Size: M, Color: Blue"
+    totalSold: Int!
+    productImage: String
+  }
+
+
 
   # INPUT TYPES for Mutations
   input CreateProductImageInput {
@@ -185,6 +193,8 @@ export default `#graphql
     getSizes: [Size!]
     getColors: [Color!]
     getMainSubCategories: [Category!]!
+    getTopSellingProducts(take: Int): [TopSellingProduct!]!
+    getLowStockProducts(threshold: Int, skip: Int, take: Int): ProductListResponse! 
   }
 
   type Mutation {

@@ -4,6 +4,8 @@ import { OrderStatus, ReturnReason, ReturnStatus } from "@prisma/client";
 import { prisma } from "../../prismaClient";
 import { GraphQLError } from "graphql";
 import { UserInputError, AuthenticationError } from "apollo-server-express";
+import { startOfMonth, subMonths, endOfMonth } from "date-fns";
+
 import {
   HeadObjectCommand,
   PutObjectCommand,
@@ -434,6 +436,100 @@ export default {
         returnRequests,
         totalCount,
       };
+    },
+    getDashboardStats: async () => {
+      const now = new Date();
+      const startOfThisMonth = startOfMonth(now);
+      const startOfLastMonth = startOfMonth(subMonths(now, 1));
+      const endOfLastMonth = endOfMonth(subMonths(now, 1));
+
+      // 1. Get Total Revenue (only from completed orders)
+      const revenueResult = await prisma.order.aggregate({
+        _sum: {
+          orderTotal: true,
+        },
+        where: {
+          payment: {
+            paymentStatus: "COMPLETED",
+          },
+        },
+      });
+
+      // 2. Get Order Counts
+      const [totalOrders, ordersThisMonth, ordersLastMonth] = await Promise.all(
+        [
+          prisma.order.count(),
+          prisma.order.count({
+            where: { createdAt: { gte: startOfThisMonth } },
+          }),
+          prisma.order.count({
+            where: {
+              createdAt: { gte: startOfLastMonth, lte: endOfLastMonth },
+            },
+          }),
+        ]
+      );
+
+      // 3. Get User Counts
+      const [totalUsers, newUsersThisMonth] = await Promise.all([
+        prisma.user.count(),
+        prisma.user.count({ where: { createdAt: { gte: startOfThisMonth } } }),
+      ]);
+
+      return {
+        totalRevenue: revenueResult._sum.orderTotal?.toNumber() || 0,
+        totalOrders,
+        ordersThisMonth,
+        ordersLastMonth,
+        totalUsers,
+        newUsersThisMonth,
+      };
+    },
+
+    // Resolver for the monthly revenue overview chart (last 12 months)
+    getRevenueOverview: async () => {
+      const twelveMonthsAgo = subMonths(new Date(), 12);
+
+      const completedOrders = await prisma.order.findMany({
+        where: {
+          createdAt: { gte: twelveMonthsAgo },
+          payment: { paymentStatus: "COMPLETED" },
+        },
+        select: {
+          orderTotal: true,
+          createdAt: true,
+        },
+      });
+
+      const monthlyRevenue = new Map<string, number>();
+
+      // Initialize last 12 months with 0 revenue
+      for (let i = 0; i < 12; i++) {
+        const date = subMonths(new Date(), i);
+        const monthKey = date.toLocaleString("default", {
+          month: "short",
+          year: "2-digit",
+        });
+        if (!monthlyRevenue.has(monthKey)) {
+          monthlyRevenue.set(monthKey, 0);
+        }
+      }
+
+      completedOrders.forEach((order) => {
+        const monthKey = order.createdAt.toLocaleString("default", {
+          month: "short",
+          year: "2-digit",
+        });
+        const currentRevenue = monthlyRevenue.get(monthKey) || 0;
+        monthlyRevenue.set(
+          monthKey,
+          currentRevenue + order.orderTotal.toNumber()
+        );
+      });
+
+      return Array.from(monthlyRevenue.entries())
+        .map(([month, revenue]) => ({ month, revenue }))
+        .reverse(); // Reverse to have the oldest month first
     },
   },
   OrderItem: {

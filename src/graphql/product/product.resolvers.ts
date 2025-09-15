@@ -256,6 +256,101 @@ export default {
     getColors: async () => {
       return prisma.color.findMany();
     },
+    getTopSellingProducts: async (_: any, { take = 5 }: { take?: number }) => {
+      const aggregatedItems = await prisma.orderItem.groupBy({
+        by: ["productVariantId"],
+        _sum: {
+          quantity: true,
+        },
+        orderBy: {
+          _sum: {
+            quantity: "desc",
+          },
+        },
+        take,
+      });
+
+      const variantIds = aggregatedItems.map((item) => item.productVariantId);
+
+      const variants = await prisma.productVariant.findMany({
+        where: {
+          id: { in: variantIds },
+        },
+        include: {
+          product: true,
+          size: true,
+          color: true,
+          images: { where: { isPrimary: true }, take: 1 },
+        },
+      });
+
+      // Map variants to a dictionary for easy lookup
+      const variantsMap = new Map(variants.map((v) => [v.id, v]));
+
+      return aggregatedItems
+        .map((item) => {
+          const variant = variantsMap.get(item.productVariantId);
+          if (!variant) return null; // Should not happen
+
+          return {
+            productName: variant.product.name,
+            variantInfo: `Size: ${variant.size.value}, Color: ${variant.color.name}`,
+            totalSold: item._sum.quantity || 0,
+            productImage: variant.images[0]?.imageUrl || null,
+          };
+        })
+        .filter(Boolean);
+    },
+
+    // Resolver for products with low stock
+    getLowStockProducts: async (
+      _: any,
+      {
+        threshold = 10,
+        skip = 0,
+        take = 10,
+      }: { threshold?: number; skip?: number; take?: number }
+    ) => {
+      const where = {
+        stock: { lte: threshold },
+        isArchived: false,
+      };
+
+      const [products, totalCount] = await Promise.all([
+        prisma.product.findMany({
+          where: {
+            variants: {
+              some: where,
+            },
+          },
+          include: {
+            variants: {
+              where: where,
+              include: {
+                size: true,
+                color: true,
+                images: true,
+              },
+              orderBy: {
+                stock: "asc",
+              },
+            },
+            categories: true,
+          },
+          skip,
+          take,
+        }),
+        prisma.product.count({
+          where: {
+            variants: {
+              some: where,
+            },
+          },
+        }),
+      ]);
+
+      return { products, totalCount };
+    },
   },
 
   Mutation: {

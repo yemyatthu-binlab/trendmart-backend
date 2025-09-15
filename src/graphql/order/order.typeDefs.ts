@@ -120,6 +120,19 @@ export default `#graphql
     url: String!
   }
 
+  type DashboardStats {
+    totalRevenue: Float!
+    totalOrders: Int!
+    ordersThisMonth: Int!
+    ordersLastMonth: Int!
+    totalUsers: Int!
+    newUsersThisMonth: Int!
+  }
+
+  type MonthlyRevenue {
+    month: String!
+    revenue: Float!
+  }
 
   # INPUT TYPES
   input OrderItemInput {
@@ -168,6 +181,8 @@ export default `#graphql
     getReturnRequests(skip: Int, take: Int, status: ReturnStatus): ReturnRequestListResponse!
     getReturnRequestById(id: ID!): ReturnRequest
     getMyReturnRequests(skip: Int, take: Int): ReturnRequestListResponse!
+    getDashboardStats: DashboardStats!
+    getRevenueOverview: [MonthlyRevenue!]!
   }
 
   # MUTATIONS
